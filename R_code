@@ -1,0 +1,571 @@
+rm(list=ls())
+library (readxl)
+library(dplyr)
+library(aTSA)
+library(tseries)
+library(zoo)
+library(scales)
+library(lmtest)
+library(strucchange)
+library(xts)
+library(lubridate)
+library(sandwich)
+################################33
+
+##### Cleaning data
+#### Date
+
+date <- read_xlsx("Date.xlsx") #### date of data
+period <- matrix()
+
+
+###### interest rate data
+
+## 3m
+i_3m <- read_xls("monthly.xls", sheet=1)      ######### 3-month maturity interest rate
+i_3m <-i_3m[,order(colnames(i_3m), decreasing = TRUE)] # ordering col names following alphabet order
+ts.i_3m <- ts(i_3m, start = c(2000,1), frequency =12)
+
+
+
+## 1y
+i_1y <- read_xls("monthly.xls", sheet = 3 ) #### importing 1-year maturity interest rate
+i_1y <- i_1y[,order(colnames(i_1y), decreasing = TRUE)] 
+ts.i_1y <- ts(i_1y, start = c(2000,1), frequency =12)
+
+
+
+######10y
+
+i_10y <- read_xls ("monthly.xls", sheet =2)   ### importing 10-year maturity interest rate
+i_10y <- i_10y [,order(colnames(i_10y), decreasing = TRUE)]
+ts.i_10y <- ts(i_10y, start = c(2000,1), frequency =12)
+
+
+
+
+
+###### exchange rate , used usd as the anchor currency
+
+e_month <- read_xls("exchangerate_MQ.xls", sheet =1) ### monthly exchange rate
+e_month <- e_month[, order(colnames(e_month), decreasing = TRUE)]
+
+
+## transform exchange rate data frame to ts
+
+ts.e_month <- ts(e_month, start = c(2000,1), frequency = 12)
+
+## extract the contracted name of observed countries
+
+
+countries_noUSA <- colnames(e_month)  
+countries_withUSA <- colnames(i_3m)
+
+#### split the tested period up into 3 intervals : pre-, in-, after-recession- NOT COMPLETE YET
+
+  
+GFC <- window(ts.e_month, start=c(2008,9), end=c(2009,04))
+
+ESDC <- window(ts.e_month, start = c(2009,5), end = c(2015,07))
+
+### plotting time series plots of monthly exchange rate for each country with the shading area is the time of recession form 2008 to 2013
+par(mar =c(4,4,2,2))  
+
+par(mfrow =c(2,1))
+
+for (i in 1:12) {
+  ts.plot(ts.e_month[,i], col="steelblue",lwd=2, main =paste0("Exchange rate of", sep= " ",countries_noUSA[i]),xlab= "" , ylab="")
+ grid() 
+ xblocks(time(GFC), col= alpha("steelblue", alpha=0.3))
+ xblocks(time(ESDC), col = alpha("pink", alpha = 0.3))
+ 
+}   
+
+
+### plot monthly interest rate of 3 maturities 
+
+
+
+
+par(mar=c(4,4,2,2))
+par(mfrow = c(2,1))
+
+
+for (i in 1: 13) {
+  ts.plot(ts.i_3m[,i],ts.i_1y[,i],ts.i_10y[,i], col=c("green", "red","black"), lwd =2 , main = paste0("3m/1Y/10Y rate of", sep= " ",countries_withUSA[i]), xlab = "")
+  legend("topright",legend = c("3m rate", "1Y rate", "10Y rate"), col=c("green", "red","black"), lty = 1)
+  grid()
+  xblocks(time(GFC), col= alpha("steelblue", alpha=0.3))
+  xblocks(time(ESDC), col = alpha("pink", alpha = 0.3))
+  
+}
+
+##########################
+
+#########################################
+
+###############take log of exchange rate
+
+le_month <- matrix(NA, nrow=240, ncol = 12)
+
+
+## monthly
+le_month <- round(log(ts.e_month),4)
+## take log of monthly exchange rate, rounding with 4 nos after decimal
+
+colnames(le_month) <- countries_noUSA
+
+le_month_excess <- mutate_all(as.data.frame(le_month),funs(. - lag(.))) %>% na.omit()   ## calculate the excess of monthly logged exchange rate with lag =1
+
+names(le_month_excess) <- countries_noUSA ## assign column names to the table
+
+
+
+######################################################
+
+##################interest differential
+
+### 3-month rate
+
+
+
+diff_i_3m <-  sapply(i_3m[,-1], function(x, na.rm = FALSE) (x- i_3m$USA)) 
+
+### calculate the difference in interest rate of each countries with respect to interest rate of USA
+
+
+
+### 1 year rate
+
+
+
+diff_i_1y <- sapply(i_1y[,-1], function (x, na.rm=FALSE) (x- i_1y$USA))                                                  
+
+
+### 10 year rate
+
+
+diff_i_10y <- sapply(i_10y[,-1], function (x, na.rm=FALSE) (x- i_10y$USA))
+
+##### Computing excess return - NOT DONE YET
+
+ts.le_month_excess <- ts(le_month_excess, start = c(2000,1), frequency = 12) #difference between log echange rate 
+
+ts.diff_i_3m <- ts(diff_i_3m, start = c(2000,1), frequency = 12) #Usa vs other intest rates
+
+ts.diff_i_1y <- ts(diff_i_1y, start = c(2000,1), frequency = 12)
+
+ts.diff_i_10y <- ts(diff_i_10y, start = c(2000,1), frequency = 12) 
+
+ts.ex_re_3m <- ts.le_month_excess -ts.diff_i_3m[-240,]
+
+ts.ex_re_1y <- ts.le_month_excess - ts.diff_i_1y[-240, ]
+
+ts.ex_re_10y <- ts.le_month_excess - ts.diff_i_10y [-240,]
+
+par(mar = c(4,4,2,2))
+par(mfrow=c(2,1))
+
+#### plot the interest rate differentials
+for (i in 1:12) {
+  ts.plot(ts.diff_i_3m[,i], ts.diff_i_1y[,i], ts.diff_i_10y[,i], main = paste0(countries_noUSA[i],"- USA"), 
+          xlab ="", lwd = 2, 
+          col = c("green", "red", "black"))
+  
+  legend("topright",legend = c("3m", "1Y ", "10Y"), col=c("green", "red","black"), lty = 1, border = NULL, bty="n")
+  grid()
+  xblocks(time(GFC), col= alpha("steelblue", alpha=0.3))
+  xblocks(time(ESDC), col = alpha("pink", alpha = 0.3))
+  abline ( h= 0, col ="black", lty =2)
+}
+
+##### plot excess returns
+
+for (i in 1:12) {
+  ts.plot(ts.ex_re_3m[,i], ts.ex_re_1y[,i], ts.ex_re_10y[,i], main = paste0("Excess return of",sep=" ", countries_noUSA[i]), xlab=" ", 
+          lwd =2, 
+          col = c("green", "red", "black") )
+  
+  legend("bottomright",legend = c("3m", "1Y ", "10Y"), col=c("green", "red","black"), lty = 1, border = NULL, bty="n")
+  grid()
+  xblocks(time(GFC), col= alpha("steelblue", alpha=0.3))
+  xblocks(time(ESDC), col = alpha("pink", alpha = 0.3))
+  abline ( h= 0, col ="black", lty =2)
+}
+
+
+
+######### test the stationarity country by country=> adf.test
+
+
+
+
+for (i in 1:12) {
+    
+  aTSA::adf.test(le_month[,i],nlag=15) #### checkingg -stationary for excess of logged exchange rates
+
+}
+
+
+  
+
+
+for (i in 1:12) {
+  aTSA:: adf.test(ts.diff_i_3m[,i], nlag = 15)
+  
+}
+
+for (i in 2:8 ) {
+  aTSA:: adf.test(ts.diff_i_1y[,i], nlag = 15)
+  
+}
+
+for (i in 10:12) {
+  aTSA:: adf.test(ts.diff_i_1y[,i], nlag = 15)
+  
+}
+
+for (i in 1:12) {
+  aTSA:: adf.test(ts.diff_i_10y[,i], nlag = 15)
+}
+
+###### ADF test for 1st difference of interest rate differential 
+
+for (i in 1:12) {
+  
+  aTSA:: adf.test(diff(ts.diff_i_3m[,i]), nlag = 15)
+  
+}
+
+
+for (i in 2:8 ) {
+  aTSA:: adf.test(diff(ts.diff_i_1y[,i]), nlag = 15)
+  
+}
+
+for (i in 10:12) {
+  aTSA:: adf.test(diff(ts.diff_i_1y[,i]), nlag = 15)
+  
+}
+
+for (i in 1:12) {
+  aTSA:: adf.test(diff(ts.diff_i_10y[,i]), nlag = 15)
+} 
+
+
+
+######################################
+
+#####running regression to estimate beta on a country-by-country
+
+### there are missing values in the dataset of 1y interest rate, from SWE and DNK 
+### do get subset ( 10 out of 12 observations) of diff_i_1y and le_month_excess to run the regression
+
+sub_lm_excess <- select(le_month_excess, !c("SWE", "DNK"))
+
+sub_diff_1y <- diff_i_1y[,c(-1,-9)]
+
+### regression
+
+reg_3m <- lapply(1: 12, function(x)(lm(le_month_excess[,x] ~diff_i_3m[-240,x])))
+
+reg_1y <- lapply(1:10, function(x)(lm(sub_lm_excess[,x]~ sub_diff_1y[-240,x])))
+
+reg_10y <- lapply(1:12, function(x)(lm(le_month_excess[,x]~diff_i_10y[-240,x])))
+
+### extract the coefficients values of all regressions (10+12+12 = 34 regressions at all)
+
+coef_3m <- matrix()
+coef_1y <- matrix()
+coef_10y <- matrix ()
+
+pval_3m <- matrix()
+pval_1y <- matrix()
+pval_10y <- matrix()
+
+
+#### coef of reg_3m & reg_10y
+
+for (i in 1:12) {
+  coef_3m[i] <- reg_3m[[i]]$coefficients[2]
+  coef_10y[i] <-reg_10y[[i]]$ coefficients[2]
+}      
+
+### coef of reg_1y
+
+for (i in 1:10) {
+  coef_1y[i] <- reg_1y[[i]]$coefficients[2]
+  
+}
+
+
+
+### pval of reg_3m & reg_10y
+
+for (i in 1:12) {
+  pval_3m[i] <- summary(reg_3m[[i]])$coefficients[2,4]
+  pval_10y[i] <- summary(reg_10y[[i]])$coefficients [2,4]
+  
+}
+
+## pval of reg_1y
+
+for (i in 1:10) {
+  pval_1y[i] <- summary(reg_1y[[i]])$coefficients[2,4]
+  
+}
+
+### table of 3 coefs (coef_all)
+
+coef_all <- data.frame(coef_3m, coef_10y,rep(NA, 12), name = countries_noUSA)
+coef_all$rep.NA..12.[c(2:8, 10:12)] <- coef_1y
+colnames(coef_all)[3] <- "coef_1y"
+
+### table of 3 pvals
+
+pval_all <- data.frame(name = countries_noUSA,pval_3m, rep(NA, 12), pval_10y)
+pval_all$rep.NA..12.[c(2:8,10:12)] <- pval_1y
+colnames(pval_all)[3] <- "pval_1y"
+
+### now order of regression of a country is the same as the order of that country in the charactor vector of "countries
+
+
+###############robust standard error- Newey west method
+
+rse_3m <- matrix()
+rse_1y <- matrix()
+rse_10y <- matrix()
+
+for (i in 1:12) {
+  rse_3m[i] <- coeftest(reg_3m[[i]], vcov. = NeweyWest)[2,2]
+  rse_10y[i] <- coeftest(reg_10y[[i]], vcov. = NeweyWest)[2,2]
+  
+}
+
+for (i in 1:10) {
+  rse_1y[i] <- coeftest(reg_1y[[i]], vcov. =NeweyWest)[2,2]
+}
+
+rse_all <- data.frame(rse_3m, rse_10y,rep(NA, 12), name = countries_noUSA)
+rse_all$rep.NA..12.[c(2:8, 10:12)] <- rse_1y
+colnames(rse_all)[3] <- "rse_1y"
+rse_all
+
+## heteroscedasticity test (bptest)
+
+bp_test_3m <- list()
+bp_test_1y <- list()
+bp_test_10y <- list()
+
+pval_bp_3m <- matrix()
+pval_bp_1y <- matrix()
+pval_bp_10y <- matrix()
+
+for (i in 1:12) {
+  bp_test_3m[[i]] <- bptest  (reg_3m[[i]])
+  pval_bp_3m[i] <- bp_test_3m[[i]]$p.value
+  
+  bp_test_10y[[i]] <- bptest(reg_10y[[i]])
+  pval_bp_10y[i] <- bp_test_10y[[i]]$p.value
+}
+
+for (i in 1:10) {
+  bp_test_1y[[i]] <- bptest(reg_1y[[i]])
+  pval_bp_1y[i] <- bp_test_1y[[i]]$p.value
+  
+}
+
+
+length(subset(pval_bp_10y, pval_bp_10y>0.05)) 
+length(subset(pval_bp_3m, pval_bp_3m>0.05))
+length(subset(pval_bp_1y, pval_bp_1y >0.05))
+
+### regardless of maturity, 50%, in average, of regressions are non-significant => mean that we can't reject the null hypothesis of no heteroesdasticity 
+#### within residuals
+
+##################### 
+
+
+
+
+
+#### results: coef are still small, for 3m, higher than testing country by country, but 2 others , coefs are smaller, but pvalue are high
+############ low R^2 => model is not appropriate to explain the relationship btw exchange rate excess at t+1 and t and
+
+###################### reg with dummy variables########################
+############## 3m#######
+
+diff_i_3m_ <- data.frame(period, diff_i_3m)
+xts.diff_i_3m <- xts(diff_i_3m_, start =c(2000,1),frequency = 12, order.by = date$Date) ## convert to extensible ts
+
+
+xts.diff_i_3m["2008-09-01/2015-07-01"] <- "crisis"  ### categorizing the time into appropriate period
+xts.diff_i_3m["/2008-08-01"] <- "pre-crisis"
+xts.diff_i_3m["2015-08-01/"] <- "post-crisis"
+
+
+reg_3m_dum <- lapply (2:13,function(x) (lm(le_month_excess[,x-1] ~as.numeric(xts.diff_i_3m[-240,x]) *  xts.diff_i_3m[-240,1])))
+
+## beta * crisis
+beta_crisis_3m <- matrix (nrow = 12, ncol = 3, by = 1)
+beta_se_3m <- matrix (nrow = 12, ncol = 3, by = 1)
+
+for (i in 1:12) {
+  
+  beta_crisis_3m [ i, 1] <- summary(reg_3m_dum[[i]])$coefficients[2,1]
+  beta_crisis_3m [i,2] <- summary(reg_3m_dum[[i]])$coefficients[6,1]
+  beta_crisis_3m [ i,3] <- summary(reg_3m_dum[[i]])$coefficients[5,1]
+  
+  beta_se_3m [ i, 1] <- summary(reg_3m_dum[[i]])$coefficients[2,2]
+  beta_se_3m [i,2] <- summary(reg_3m_dum[[i]])$coefficients[6,2]
+  beta_se_3m [ i,3] <- summary(reg_3m_dum[[i]])$coefficients[5,2]
+  }
+ 
+  
+########### 1y
+sub_diff_1y_ <- data.frame(period, sub_diff_1y)
+
+xts.sub_diff_1y <- xts(sub_diff_1y_, start = c(2000,1), frequency = 12, order.by = date$Date)
+xts.sub_diff_1y["2008-09-01/2015-07-01"] <- "crisis"  ### categorizing the time into appropriate period
+xts.sub_diff_1y["/2008-08-01"] <- "pre-crisis"
+xts.sub_diff_1y["2015-08-01/"] <- "post-crisis"
+
+reg_1y_dum <- lapply(2:11, function(x) ( lm(sub_lm_excess[, x-1] ~as.numeric(xts.sub_diff_1y[-240, x]) * xts.sub_diff_1y[-240,1])))
+
+## beta * crisis
+beta_crisis_1y <- matrix (nrow = 10, ncol = 3, by = 1)
+beta_se_1y <- matrix (nrow = 10, ncol = 3, by = 1)
+
+for (i in 1:10) {
+  
+  beta_crisis_1y [ i, 1] <- summary(reg_1y_dum[[i]])$coefficients[2,1]
+  beta_crisis_1y [i,2] <- summary(reg_1y_dum[[i]])$coefficients[6,1]
+  beta_crisis_1y [ i,3] <- summary(reg_1y_dum[[i]])$coefficients[5,1]
+  
+  beta_se_1y [ i, 1] <- summary(reg_1y_dum[[i]])$coefficients[2,2]
+  beta_se_1y [i,2] <- summary(reg_1y_dum[[i]])$coefficients[6,2]
+  beta_se_1y [ i,3] <- summary(reg_1y_dum[[i]])$coefficients[5,2]
+}
+
+##############10y
+diff_i_10y_ <- data.frame(period, diff_i_10y)
+xts.diff_i_10y <- xts(diff_i_10y_, start =c(2000,1),frequency = 12, order.by = date$Date) ## convert to extensible ts
+
+
+xts.diff_i_10y["2008-09-01/2015-07-01"] <- "crisis"  ### categorizing the time into appropriate period
+xts.diff_i_10y["/2008-08-01"] <- "pre-crisis"
+xts.diff_i_10y["2015-08-01/"] <- "post-crisis"
+
+
+reg_10y_dum <- lapply (2:13,function(x) (lm(le_month_excess[,x-1] ~as.numeric(xts.diff_i_10y[-240,x]) *  xts.diff_i_10y[-240,1])))
+
+######## beta * dummy variable###########
+
+beta_crisis_10y <- matrix (nrow = 12, ncol = 3, by = 1)
+beta_se_10y <- matrix (nrow = 12, ncol = 3, by = 1)
+
+for (i in 1:12) {
+  
+  beta_crisis_10y [ i, 1] <- summary(reg_10y_dum[[i]])$coefficients[2,1] ### beta
+  beta_crisis_10y [i,2] <- summary(reg_10y_dum[[i]])$coefficients[6,1]   ###beta * pre_crisis
+  beta_crisis_10y [ i,3] <- summary(reg_10y_dum[[i]])$coefficients[5,1] ###beta * post-crisis
+  
+  beta_se_10y [ i, 1] <- summary(reg_10y_dum[[i]])$coefficients[2,2]
+  beta_se_10y [i,2] <- summary(reg_10y_dum[[i]])$coefficients[6,2]
+  beta_se_10y [ i,3] <- summary(reg_10y_dum[[i]])$coefficients[5,2]
+}
+
+########### ECM############
+#### testing for cointegration#####
+resid_3m <- matrix(NA,ncol=12, nrow= 239)
+resid_10y <- matrix(NA,ncol =12, nrow =239)
+
+
+
+for (i in 1:12) {
+  
+  resid_3m[,i] <-c(residuals(reg_3m[[i]]),rep(NA,239-length(residuals(reg_3m[[i]]))))
+  
+  resid_10y[,i] <- c(residuals(reg_10y[[i]]), rep ( NA, 239 - length(residuals (reg_10y[[i]]))))
+  
+}
+
+resid_3m_<-resid_3m[,c(1:5, 7:12)] #### residuals of all regressions with non-missing values data
+resid_10y_ <- resid_10y[, c(1:3,6,8:12)]
+
+
+#### stationarity test for residuals
+
+for (i in 1:11) {
+  
+  aTSA:: adf.test(resid_3m_[,i], nlag = 15)
+  
+}
+
+for (i in 1:9) {
+  
+  aTSA:: adf.test(resid_10y_[,i], nlag = 15)
+  
+}
+########## 2nd difference of spot exchange rate
+
+diff.ts.le.ex <- diff(ts.le_month_excess)
+
+### ECM of 3 month interest rate
+
+ts.resid_3m <- ts(resid_3m_, start = c(2000,1), frequency = 12)
+ts.resid_10y <- ts(resid_10y_, start = c(2000,1), frequency = 12)
+
+lag.resid_3m <- matrix (NA, ncol = 12, nrow =239) 
+lag.resid_10y <- matrix(NA, ncol = 12, nrow =239)
+
+diff.ts.i_3m <- diff(ts.diff_i_3m[,c(1:5, 7:12)])
+diff.ts.i_10y <- diff( ts.diff_i_10y[,c(1:3,6,8:12)])
+
+##### 3m:
+
+for (i in 1:11) {
+  lag.resid_3m[,i] <- lag(ts.resid_3m[,i],k=-1) ### 1-lag of residual
+}
+
+diff.ts.le.ex_3m <- diff.ts.le.ex[,c(1:5, 7:12)] ### extract only selected countries
+
+ecm_3m <- lapply (1:11, function(x) (lm(diff.ts.le.ex_3m[,i] ~  
+                                          ts.resid_3m [1:238,x] + diff.ts.i_3m[1:238,x])))
+
+coef.ecm_3m <- rep(NA, 11) 
+
+pval.ecm_3m <- rep(NA, 11)
+
+
+for (i in 1:11) {
+  coef.ecm_3m[i] <- ecm_3m[[i]]$coefficients[2] ### vector of error correction
+  
+  
+  pval.ecm_3m[i] <- summary(ecm_3m[[i]])$coefficients[2,4]
+  
+}
+
+
+#### 10y
+
+for (i in 1:9) {
+  lag.resid_10y[,i] <- lag(ts.resid_10y[,i],k=-1)
+}
+
+diff.ts.le.ex_10y <- diff.ts.le.ex[,c(1:3,6,8:12)]
+
+
+ecm_10y <- lapply(1:9, function(x) (lm (diff.ts.le.ex_10y[,i] ~ ts.resid_10y [1:238, x] + diff.ts.i_10y [1:238,x])))
+
+coef.ecm_10y <- rep(NA, 9)
+
+pval.ecm_10y <- rep(NA, 9)
+
+
+for (i in 1:9) {
+  coef.ecm_10y[i] <- ecm_10y[[i]]$coefficients[2]### vector of error correction
+  
+  
+  pval.ecm_10y[i] <- summary(ecm_10y[[i]])$coefficients[2,4]
+} 
